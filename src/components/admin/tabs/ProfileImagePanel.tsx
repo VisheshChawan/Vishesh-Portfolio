@@ -2,11 +2,14 @@
 
 import { useState, useRef } from 'react';
 import { useProfileImageStore } from '@/store/profileImageStore';
+import { useAdminStore } from '@/store/adminStore';
 import { Upload, Trash2, RefreshCw, ImageIcon, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function ProfileImagePanel() {
   const { image, setImage, deleteImage } = useProfileImageStore();
+  const updateContent = useAdminStore((s) => s.updateContent);
+  const avatarUrl = useAdminStore((s) => s.config.avatarUrl);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [isDragging, setIsDragging] = useState(false);
@@ -20,14 +23,12 @@ export default function ProfileImagePanel() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const processFile = (file: File) => {
-    // Validate size
+  const processFile = async (file: File) => {
     if (file.size > 5 * 1024 * 1024) {
       triggerToast('File exceeds 5MB limit.', 'error');
       return;
     }
 
-    // Validate type
     const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!validTypes.includes(file.type)) {
       triggerToast('Invalid format. Use JPG, PNG, or WEBP.', 'error');
@@ -39,39 +40,69 @@ export default function ProfileImagePanel() {
 
     const interval = setInterval(() => {
       setUploadProgress((prev) => {
-        if (prev >= 90) { clearInterval(interval); return prev; }
-        return prev + 18;
+        if (prev >= 80) { clearInterval(interval); return prev; }
+        return prev + 12;
       });
-    }, 80);
+    }, 100);
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const base64Data = e.target?.result as string;
+    try {
+      // 1. Upload to Vercel Blob for remote access
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('category', 'avatar');
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const json = await res.json();
 
-      // Get image dimensions
-      const img = new window.Image();
-      img.onload = () => {
-        clearInterval(interval);
-        setUploadProgress(100);
+      if (json.success && json.url) {
+        updateContent('avatarUrl', json.url);
+      }
 
-        setImage({
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type,
-          uploadDate: new Date().toISOString(),
-          base64Data,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-        });
+      // 2. Also save locally for instant admin preview
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64Data = e.target?.result as string;
+        const img = new window.Image();
+        img.onload = () => {
+          clearInterval(interval);
+          setUploadProgress(100);
 
-        setTimeout(() => {
-          setUploading(false);
-          triggerToast('Profile image uploaded.', 'success');
-        }, 300);
+          setImage({
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type,
+            uploadDate: new Date().toISOString(),
+            base64Data,
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          });
+
+          setTimeout(() => {
+            setUploading(false);
+            triggerToast('Avatar uploaded & synced.', 'success');
+          }, 300);
+        };
+        img.src = base64Data;
       };
-      img.src = base64Data;
-    };
-    reader.readAsDataURL(file);
+      reader.readAsDataURL(file);
+    } catch (err) {
+      clearInterval(interval);
+      setUploading(false);
+      triggerToast('Upload failed. Check connection.', 'error');
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      await fetch('/api/upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'avatar' }),
+      });
+    } catch {}
+    updateContent('avatarUrl', undefined);
+    deleteImage();
+    setShowDeleteConfirm(false);
+    triggerToast('Image removed.', 'success');
   };
 
   const onDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
@@ -90,7 +121,12 @@ export default function ProfileImagePanel() {
           Profile Avatar Module
         </h3>
 
-        {/* Upload / Drag & Drop Area */}
+        {avatarUrl && (
+          <div className="text-[0.55rem] text-white/30 font-mono bg-white/5 p-2 border border-white/5 break-all">
+            ✓ Synced to cloud: {avatarUrl.substring(0, 60)}...
+          </div>
+        )}
+
         {!image || uploading ? (
           <div
             onDragOver={onDragOver}
@@ -111,7 +147,7 @@ export default function ProfileImagePanel() {
                   />
                 </div>
                 <div className="text-[0.6rem] uppercase tracking-widest text-[var(--accent-primary)] animate-pulse">
-                  Processing Image... {Math.round(uploadProgress)}%
+                  Uploading to Cloud... {Math.round(uploadProgress)}%
                 </div>
               </div>
             ) : (
@@ -127,36 +163,17 @@ export default function ProfileImagePanel() {
                 </button>
               </>
             )}
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              ref={fileInputRef}
+            <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" ref={fileInputRef}
               onChange={(e) => { if (e.target.files?.[0]) processFile(e.target.files[0]); }}
             />
           </div>
         ) : (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="space-y-4"
-          >
-            {/* Live Preview */}
+          <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-4">
             <div className="flex items-center gap-6 p-4 border border-white/10 bg-black/40">
-              <div
-                className="w-24 h-24 shrink-0 overflow-hidden border-2 border-[var(--accent-primary)]/40"
-                style={{
-                  borderRadius: '50%',
-                  boxShadow: '0 0 20px rgba(0,255,200,0.15), inset 0 0 20px rgba(0,255,200,0.05)',
-                }}
-              >
-                <img
-                  src={image.base64Data}
-                  alt="Profile"
-                  className="w-full h-full object-cover"
-                />
+              <div className="w-24 h-24 shrink-0 overflow-hidden border-2 border-[var(--accent-primary)]/40"
+                style={{ borderRadius: '50%', boxShadow: '0 0 20px rgba(0,255,200,0.15), inset 0 0 20px rgba(0,255,200,0.05)' }}>
+                <img src={image.base64Data} alt="Profile" className="w-full h-full object-cover" />
               </div>
-
               <div className="flex-1 min-w-0">
                 <div className="text-[0.8rem] text-white font-bold truncate">{image.fileName}</div>
                 <div className="text-[0.6rem] text-white/40 font-mono uppercase space-y-1 mt-2">
@@ -167,79 +184,43 @@ export default function ProfileImagePanel() {
               </div>
             </div>
 
-            {/* Actions */}
             <div className="flex gap-2">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex-1 flex items-center justify-center gap-2 py-2 text-[0.65rem] uppercase tracking-widest border border-white/10 hover:border-[var(--accent-primary)]/50 hover:bg-[var(--accent-primary)]/10 hover:text-[var(--accent-primary)] transition-colors"
-              >
+              <button onClick={() => fileInputRef.current?.click()}
+                className="flex-1 flex items-center justify-center gap-2 py-2 text-[0.65rem] uppercase tracking-widest border border-white/10 hover:border-[var(--accent-primary)]/50 hover:bg-[var(--accent-primary)]/10 hover:text-[var(--accent-primary)] transition-colors">
                 <RefreshCw size={14} /> Replace
               </button>
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="py-2 px-4 text-[0.65rem] border border-red-500/30 text-red-500/50 hover:bg-red-500/10 hover:text-red-400 uppercase tracking-widest transition-colors flex items-center justify-center"
-              >
+              <button onClick={() => setShowDeleteConfirm(true)}
+                className="py-2 px-4 text-[0.65rem] border border-red-500/30 text-red-500/50 hover:bg-red-500/10 hover:text-red-400 uppercase tracking-widest transition-colors flex items-center justify-center">
                 <Trash2 size={14} />
               </button>
             </div>
 
-            {/* Delete Confirmation */}
             <AnimatePresence>
               {showDeleteConfirm && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden"
-                >
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                   <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 p-3">
                     <span className="text-[0.65rem] text-red-400 flex-1 uppercase tracking-widest font-bold ml-1">Delete Avatar?</span>
-                    <button
-                      onClick={() => {
-                        deleteImage();
-                        setShowDeleteConfirm(false);
-                        triggerToast('Image removed.', 'success');
-                      }}
-                      className="px-3 py-1 bg-red-500 text-white text-[0.6rem] tracking-wider uppercase hover:bg-white hover:text-red-500 transition-colors"
-                    >
-                      Confirm
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="px-3 py-1 border border-white/10 text-white/50 text-[0.6rem] tracking-wider uppercase hover:text-white transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    <button onClick={handleDelete} className="px-3 py-1 bg-red-500 text-white text-[0.6rem] tracking-wider uppercase hover:bg-white hover:text-red-500 transition-colors">Confirm</button>
+                    <button onClick={() => setShowDeleteConfirm(false)} className="px-3 py-1 border border-white/10 text-white/50 text-[0.6rem] tracking-wider uppercase hover:text-white transition-colors">Cancel</button>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              ref={fileInputRef}
+            <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" ref={fileInputRef}
               onChange={(e) => { if (e.target.files?.[0]) processFile(e.target.files[0]); }}
             />
           </motion.div>
         )}
       </section>
 
-      {/* Toast */}
       <AnimatePresence>
         {toast && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             className={`fixed bottom-4 right-4 z-[999999] px-4 py-3 flex items-center gap-3 backdrop-blur-md border ${
-              toast.type === 'success'
-                ? 'bg-black/80 border-[var(--accent-primary)]/50 text-[var(--accent-primary)]'
-                : 'bg-black/80 border-red-500/50 text-red-400'
+              toast.type === 'success' ? 'bg-black/80 border-[var(--accent-primary)]/50 text-[var(--accent-primary)]' : 'bg-black/80 border-red-500/50 text-red-400'
             }`}
-            style={{ boxShadow: toast.type === 'success' ? '0 0 30px rgba(0,255,200,0.1)' : '0 0 30px rgba(255,0,0,0.1)' }}
-          >
+            style={{ boxShadow: toast.type === 'success' ? '0 0 30px rgba(0,255,200,0.1)' : '0 0 30px rgba(255,0,0,0.1)' }}>
             {toast.type === 'success' ? <CheckCircle2 size={16} /> : <ShieldAlert size={16} />}
             <span className="text-[0.7rem] uppercase tracking-widest font-mono">{toast.msg}</span>
           </motion.div>

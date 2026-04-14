@@ -2,12 +2,15 @@
 
 import { useState, useRef } from 'react';
 import { useResumeStore } from '@/store/resumeStore';
+import { useAdminStore } from '@/store/adminStore';
 import { Upload, FileMinus, Download, Eye, FileText, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ResumePreviewModal from './ResumePreviewModal';
 
 export default function ResumePanel() {
   const { resume, setResume, deleteResume } = useResumeStore();
+  const updateContent = useAdminStore((s) => s.updateContent);
+  const resumeUrl = useAdminStore((s) => s.config.resumeUrl);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [isDragging, setIsDragging] = useState(false);
@@ -22,7 +25,7 @@ export default function ResumePanel() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     if (file.size > 5 * 1024 * 1024) {
       triggerToast('File size exceeds 5MB limit.', 'error');
       return;
@@ -37,62 +40,83 @@ export default function ResumePanel() {
     setUploading(true);
     setUploadProgress(0);
 
-    // Simulate upload progress
     const interval = setInterval(() => {
       setUploadProgress(prev => {
-        if (prev >= 90) {
-          clearInterval(interval);
-          return prev;
-        }
-        return prev + 15;
+        if (prev >= 80) { clearInterval(interval); return prev; }
+        return prev + 12;
       });
     }, 100);
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64Data = e.target?.result as string;
+    try {
+      // 1. Upload to Vercel Blob for remote access
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('category', 'resume');
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const json = await res.json();
 
-      let textContent = '';
-      if (file.type === 'text/plain') {
-        const textReader = new FileReader();
-        textReader.onload = (te) => {
-          clearInterval(interval);
-          setUploadProgress(100);
-          setResume({
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type,
-            uploadDate: new Date().toISOString(),
-            base64Data,
-            textContent: te.target?.result as string,
-          });
-          setTimeout(() => {
-            setUploading(false);
-            triggerToast('Resume uploaded securely.', 'success');
-          }, 300);
-        };
-        textReader.readAsText(file);
-        return;
+      if (json.success && json.url) {
+        updateContent('resumeUrl', json.url);
+        updateContent('resumeFileName', file.name);
       }
 
-      clearInterval(interval);
-      setUploadProgress(100);
-      setResume({
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type || (file.name.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'unknown'),
-        uploadDate: new Date().toISOString(),
-        base64Data,
-      });
+      // 2. Also save locally for admin preview
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64Data = e.target?.result as string;
 
-      setTimeout(() => {
-        setUploading(false);
-        triggerToast('Resume uploaded securely.', 'success');
-      }, 300);
-    };
-    
-    // Using DataURL natively handles the Base64 representation needed to restore files visually
-    reader.readAsDataURL(file);
+        if (file.type === 'text/plain') {
+          const textReader = new FileReader();
+          textReader.onload = (te) => {
+            clearInterval(interval);
+            setUploadProgress(100);
+            setResume({
+              fileName: file.name,
+              fileSize: file.size,
+              fileType: file.type,
+              uploadDate: new Date().toISOString(),
+              base64Data,
+              textContent: te.target?.result as string,
+            });
+            setTimeout(() => { setUploading(false); triggerToast('Resume uploaded & synced.', 'success'); }, 300);
+          };
+          textReader.readAsText(file);
+          return;
+        }
+
+        clearInterval(interval);
+        setUploadProgress(100);
+        setResume({
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type || (file.name.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'unknown'),
+          uploadDate: new Date().toISOString(),
+          base64Data,
+        });
+
+        setTimeout(() => { setUploading(false); triggerToast('Resume uploaded & synced.', 'success'); }, 300);
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      clearInterval(interval);
+      setUploading(false);
+      triggerToast('Upload failed. Check connection.', 'error');
+    }
+  };
+
+  const handleDeleteResume = async () => {
+    try {
+      await fetch('/api/upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'resume' }),
+      });
+    } catch {}
+    updateContent('resumeUrl', undefined);
+    updateContent('resumeFileName', undefined);
+    deleteResume();
+    setShowDeleteConfirm(false);
+    triggerToast('Resume destroyed.', 'success');
   };
 
   const onDragOver = (e: React.DragEvent) => {
@@ -214,11 +238,7 @@ export default function ResumePanel() {
                 <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 p-2">
                   <span className="text-[0.65rem] text-red-400 flex-1 uppercase tracking-widest font-bold ml-2">Wipe File?</span>
                   <button 
-                    onClick={() => {
-                      deleteResume();
-                      setShowDeleteConfirm(false);
-                      triggerToast('Resume destroyed.', 'success');
-                    }}
+                    onClick={handleDeleteResume}
                     className="px-3 py-1 bg-red-500 text-white text-[0.6rem] tracking-wider uppercase hover:bg-white hover:text-red-500 transition-colors"
                   >
                     Confirm

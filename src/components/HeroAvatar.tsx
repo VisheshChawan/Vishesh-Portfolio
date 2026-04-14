@@ -9,8 +9,13 @@ import { useState, useEffect } from 'react';
 export default function HeroAvatar() {
   const image = useProfileImageStore((s) => s.image);
   const name = useAdminStore((s) => s.config.personal.name);
+  const avatarUrl = useAdminStore((s) => s.config.avatarUrl);
   const settings = useAvatarStore((s) => s.settings);
   const [isMobile, setIsMobile] = useState(false);
+
+  // Priority: local base64 (admin has it) > remote blob URL (visitors) > null
+  const imageSrc = image?.base64Data || avatarUrl || null;
+  const hasImage = !!imageSrc;
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 1024);
@@ -87,9 +92,9 @@ export default function HeroAvatar() {
           boxShadow,
         }}
       >
-        {image ? (
+        {hasImage ? (
           <motion.img
-            src={image.base64Data}
+            src={imageSrc!}
             alt="Profile"
             className="w-full h-full object-cover"
             loading="lazy"

@@ -112,22 +112,29 @@ export default function Navbar() {
               </div>
 
               {/* Resume button */}
-              {resume ? (
-                <a
-                  href={resume.base64Data}
-                  download={resume.fileName}
-                  className="chamfer-sm flex items-center gap-2 px-4 py-1.5 text-[0.7rem] tracking-[0.1em] uppercase border transition-all duration-300 hover:bg-[var(--accent-primary)]/5"
-                  style={{
-                    fontFamily: 'var(--font-mono)',
-                    color: 'var(--accent-primary)',
-                    borderColor: 'var(--border-default)',
-                  }}
-                  data-cursor-hover
-                >
-                  <Download size={12} />
-                  RESUME
-                </a>
-              ) : null}
+              {(() => {
+                const resumeUrl = useAdminStore.getState().config.resumeUrl;
+                const resumeFileName = useAdminStore.getState().config.resumeFileName;
+                const href = resume?.base64Data || resumeUrl;
+                const fileName = resume?.fileName || resumeFileName || 'resume';
+                if (!href) return null;
+                return (
+                  <a
+                    href={href}
+                    download={fileName}
+                    className="chamfer-sm flex items-center gap-2 px-4 py-1.5 text-[0.7rem] tracking-[0.1em] uppercase border transition-all duration-300 hover:bg-[var(--accent-primary)]/5"
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      color: 'var(--accent-primary)',
+                      borderColor: 'var(--border-default)',
+                    }}
+                    data-cursor-hover
+                  >
+                    <Download size={12} />
+                    RESUME
+                  </a>
+                );
+              })()}
             </div>
           </div>
 

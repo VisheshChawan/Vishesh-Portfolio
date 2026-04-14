@@ -154,4 +154,8 @@ export interface PortfolioConfig {
   animations: AnimationConfig;
   sections: SectionBlock[];
   advanced: AdvancedConfig;
+  // Remote file URLs (synced to Vercel Blob for all visitors)
+  avatarUrl?: string;
+  resumeUrl?: string;
+  resumeFileName?: string;
 }

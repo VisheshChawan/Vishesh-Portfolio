@@ -40,6 +40,9 @@ export default function ConfigProvider({ children }: { children: React.ReactNode
           if (config.animations) updateContent('animations', config.animations);
           if (config.sections) updateContent('sections', config.sections);
           if (config.advanced) updateContent('advanced', config.advanced);
+          if (config.avatarUrl) updateContent('avatarUrl', config.avatarUrl);
+          if (config.resumeUrl) updateContent('resumeUrl', config.resumeUrl);
+          if (config.resumeFileName) updateContent('resumeFileName', config.resumeFileName);
         }
       } catch (err) {
         // Silently fall back to default config if API is unavailable
