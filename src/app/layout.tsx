@@ -41,6 +41,7 @@ import ThemeSyncer from "@/components/admin/ThemeSyncer";
 import MetaSyncer from "@/components/admin/MetaSyncer";
 import AdminTrigger from "@/components/admin/AdminTrigger";
 import ScrollObserver from "@/components/ScrollObserver";
+import ConfigProvider from "@/components/ConfigProvider";
 
 export default function RootLayout({
   children,
@@ -57,7 +58,9 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <ScrollObserver />
         <AdminTrigger />
-        {children}
+        <ConfigProvider>
+          {children}
+        </ConfigProvider>
       </body>
     </html>
   );

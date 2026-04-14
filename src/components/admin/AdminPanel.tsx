@@ -42,7 +42,36 @@ export default function AdminPanel() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo]);
 
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
   const tabs = ['CONTENT', 'THEME', 'ANIMATIONS', 'SECTIONS', 'DOCUMENTS', 'PROFILE', 'AVATAR', 'ADVANCED'] as const;
+
+  const handleSaveAll = async () => {
+    setSaving(true);
+    setSaveStatus('idle');
+    try {
+      const config = useAdminStore.getState().config;
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setSaveStatus('success');
+        setTimeout(() => setSaveStatus('idle'), 3000);
+      } else {
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 3000);
+      }
+    } catch (err) {
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleExport = () => {
     const dataStr = localStorage.getItem('vc_portfolio_config');
@@ -88,8 +117,18 @@ export default function AdminPanel() {
         <div className="text-[0.65rem] text-white/50 mb-4">Vishesh Chawan · Admin Mode</div>
         
         <div className="flex gap-2 text-[0.7rem] uppercase">
-          <button className="flex-1 py-1.5 bg-[var(--accent-primary)] text-[#010108] font-bold hover:brightness-110 active:scale-95 transition-all">
-            💾 SAVE ALL
+          <button 
+            onClick={handleSaveAll}
+            disabled={saving}
+            className={`flex-1 py-1.5 font-bold active:scale-95 transition-all ${
+              saveStatus === 'success' 
+                ? 'bg-green-500 text-white' 
+                : saveStatus === 'error'
+                ? 'bg-red-500 text-white'
+                : 'bg-[var(--accent-primary)] text-[#010108] hover:brightness-110'
+            } ${saving ? 'opacity-70 cursor-wait' : ''}`}
+          >
+            {saving ? '⏳ SAVING...' : saveStatus === 'success' ? '✓ SAVED!' : saveStatus === 'error' ? '✗ FAILED' : '💾 SAVE ALL'}
           </button>
           <button 
             onClick={() => { if(confirm('Reset all settings to defaults?')) resetConfig(); }}
