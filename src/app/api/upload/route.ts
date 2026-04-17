@@ -1,7 +1,9 @@
-import { put, list, del } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/supabase';
 
-// POST — upload a file (resume or avatar) to Vercel Blob
+const FIXED_USER_ID = 'portfolio-admin';
+
+// POST — upload a file (resume or avatar) to Supabase Storage
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -17,22 +19,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'File exceeds 5MB limit' }, { status: 413 });
     }
 
-    const prefix = `vc-${category}`;
+    const bucket = category === 'avatar' ? 'profile-images' : 'resumes';
+    const ext = file.name.split('.').pop() || (category === 'avatar' ? 'jpg' : 'pdf');
+    const filePath = `${FIXED_USER_ID}/${category}.${ext}`;
 
-    // Delete old file for this category
-    const { blobs } = await list({ prefix });
-    for (const blob of blobs) {
-      await del(blob.url);
+    // Convert File to ArrayBuffer for Supabase upload
+    const arrayBuffer = await file.arrayBuffer();
+    const fileBuffer = new Uint8Array(arrayBuffer);
+
+    // Upload to Supabase Storage (upsert to overwrite existing)
+    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+      .from(bucket)
+      .upload(filePath, fileBuffer, {
+        contentType: file.type,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error('Storage upload error:', uploadError);
+      throw new Error(uploadError.message);
     }
 
-    // Upload new file
-    const blob = await put(`${prefix}-${file.name}`, file, {
-      access: 'public',
-      addRandomSuffix: false,
-    });
+    // Get public URL
+    const { data: urlData } = supabaseAdmin.storage
+      .from(bucket)
+      .getPublicUrl(filePath);
+
+    const publicUrl = urlData.publicUrl;
+
+    // Also update the config in the DB immediately
+    const configField = category === 'avatar' ? 'avatarUrl' : 'resumeUrl';
+    
+    // First get existing config
+    const { data: existing } = await supabaseAdmin
+      .from('portfolio_settings')
+      .select('config')
+      .eq('id', 1)
+      .single();
+
+    const currentConfig = existing?.config || {};
+    const updatedConfig = { 
+      ...currentConfig, 
+      [configField]: publicUrl,
+      ...(category === 'resume' ? { resumeFileName: file.name } : {})
+    };
+
+    await supabaseAdmin
+      .from('portfolio_settings')
+      .upsert({
+        id: 1,
+        config: updatedConfig,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
 
     return NextResponse.json({
-      url: blob.url,
+      url: publicUrl,
       fileName: file.name,
       fileSize: file.size,
       fileType: file.type,
@@ -44,15 +85,45 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// DELETE — remove a file by category
+// DELETE — remove a file by category from Supabase Storage
 export async function DELETE(request: NextRequest) {
   try {
     const { category } = await request.json();
-    const prefix = `vc-${category}`;
+    const bucket = category === 'avatar' ? 'profile-images' : 'resumes';
 
-    const { blobs } = await list({ prefix });
-    for (const blob of blobs) {
-      await del(blob.url);
+    // List all files in the user's folder
+    const { data: files } = await supabaseAdmin.storage
+      .from(bucket)
+      .list(FIXED_USER_ID);
+
+    if (files && files.length > 0) {
+      const filePaths = files.map(f => `${FIXED_USER_ID}/${f.name}`);
+      await supabaseAdmin.storage.from(bucket).remove(filePaths);
+    }
+
+    // Also clear the URL from the config in DB
+    const configField = category === 'avatar' ? 'avatarUrl' : 'resumeUrl';
+    
+    const { data: existing } = await supabaseAdmin
+      .from('portfolio_settings')
+      .select('config')
+      .eq('id', 1)
+      .single();
+
+    if (existing?.config) {
+      const updatedConfig = { ...existing.config };
+      delete updatedConfig[configField];
+      if (category === 'resume') {
+        delete updatedConfig.resumeFileName;
+      }
+
+      await supabaseAdmin
+        .from('portfolio_settings')
+        .upsert({
+          id: 1,
+          config: updatedConfig,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
     }
 
     return NextResponse.json({ success: true }, { status: 200 });

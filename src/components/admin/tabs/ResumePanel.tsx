@@ -1,24 +1,22 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { useResumeStore } from '@/store/resumeStore';
 import { useAdminStore } from '@/store/adminStore';
 import { Upload, FileMinus, Download, Eye, FileText, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import ResumePreviewModal from './ResumePreviewModal';
 
 export default function ResumePanel() {
-  const { resume, setResume, deleteResume } = useResumeStore();
   const updateContent = useAdminStore((s) => s.updateContent);
   const resumeUrl = useAdminStore((s) => s.config.resumeUrl);
+  const resumeFileName = useAdminStore((s) => s.config.resumeFileName);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
   const [toast, setToast] = useState<{msg: string, type: 'success'|'error'} | null>(null);
+  const [uploadedMeta, setUploadedMeta] = useState<{fileName: string, fileSize: number, fileType: string} | null>(null);
 
   const triggerToast = (msg: string, type: 'success'|'error') => {
     setToast({ msg, type });
@@ -48,55 +46,44 @@ export default function ResumePanel() {
     }, 100);
 
     try {
-      // 1. Upload to Vercel Blob for remote access
+      // Upload to Supabase Storage via API route
       const formData = new FormData();
       formData.append('file', file);
       formData.append('category', 'resume');
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const json = await res.json();
 
+      clearInterval(interval);
+
       if (json.success && json.url) {
-        updateContent('resumeUrl', json.url);
-        updateContent('resumeFileName', file.name);
-      }
-
-      // 2. Also save locally for admin preview
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64Data = e.target?.result as string;
-
-        if (file.type === 'text/plain') {
-          const textReader = new FileReader();
-          textReader.onload = (te) => {
-            clearInterval(interval);
-            setUploadProgress(100);
-            setResume({
-              fileName: file.name,
-              fileSize: file.size,
-              fileType: file.type,
-              uploadDate: new Date().toISOString(),
-              base64Data,
-              textContent: te.target?.result as string,
-            });
-            setTimeout(() => { setUploading(false); triggerToast('Resume uploaded & synced.', 'success'); }, 300);
-          };
-          textReader.readAsText(file);
-          return;
-        }
-
-        clearInterval(interval);
         setUploadProgress(100);
-        setResume({
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type || (file.name.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'unknown'),
-          uploadDate: new Date().toISOString(),
-          base64Data,
+        // Update the store with the public URL from Supabase
+        updateContent('resumeUrl', json.url);
+        updateContent('resumeFileName', json.fileName);
+        setUploadedMeta({
+          fileName: json.fileName,
+          fileSize: json.fileSize,
+          fileType: json.fileType,
         });
 
-        setTimeout(() => { setUploading(false); triggerToast('Resume uploaded & synced.', 'success'); }, 300);
-      };
-      reader.readAsDataURL(file);
+        // Auto-save the full config to Supabase DB
+        setTimeout(async () => {
+          try {
+            const config = useAdminStore.getState().config;
+            await fetch('/api/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(config),
+            });
+          } catch {}
+        }, 200);
+
+        setTimeout(() => { setUploading(false); triggerToast('Resume uploaded & synced to cloud.', 'success'); }, 300);
+      } else {
+        setUploadProgress(0);
+        setUploading(false);
+        triggerToast(json.error || 'Upload failed.', 'error');
+      }
     } catch (err) {
       clearInterval(interval);
       setUploading(false);
@@ -114,8 +101,19 @@ export default function ResumePanel() {
     } catch {}
     updateContent('resumeUrl', undefined);
     updateContent('resumeFileName', undefined);
-    deleteResume();
+    setUploadedMeta(null);
     setShowDeleteConfirm(false);
+
+    // Auto-save config after delete
+    try {
+      const config = useAdminStore.getState().config;
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+    } catch {}
+
     triggerToast('Resume destroyed.', 'success');
   };
 
@@ -135,12 +133,22 @@ export default function ResumePanel() {
   };
 
   const handleDownload = () => {
-    if (!resume) return;
+    if (!resumeUrl) return;
     const a = document.createElement('a');
-    a.href = resume.base64Data;
-    a.download = resume.fileName;
+    a.href = resumeUrl;
+    a.download = resumeFileName || 'resume';
+    a.target = '_blank';
     a.click();
   };
+
+  const handleView = () => {
+    if (!resumeUrl) return;
+    window.open(resumeUrl, '_blank');
+  };
+
+  const hasResume = !!resumeUrl;
+  const displayName = uploadedMeta?.fileName || resumeFileName || 'Resume';
+  const displaySize = uploadedMeta?.fileSize;
 
   return (
     <div className="space-y-6 pb-12 text-[#c4cad6] relative">
@@ -151,7 +159,7 @@ export default function ResumePanel() {
         </h3>
 
         {/* Uploader UI */}
-        {!resume || uploading ? (
+        {!hasResume || uploading ? (
           <div 
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
@@ -171,7 +179,7 @@ export default function ResumePanel() {
                   />
                 </div>
                 <div className="text-[0.6rem] uppercase tracking-widest text-[var(--accent-primary)] animate-pulse">
-                  Encrypting Payload... {Math.round(uploadProgress)}%
+                  Uploading to Cloud... {Math.round(uploadProgress)}%
                 </div>
               </div>
             ) : (
@@ -210,9 +218,10 @@ export default function ResumePanel() {
                   <FileText className="text-[var(--accent-primary)]" size={24} />
                 </div>
                 <div>
-                  <div className="text-[0.8rem] text-white font-bold max-w-[200px] truncate">{resume.fileName}</div>
+                  <div className="text-[0.8rem] text-white font-bold max-w-[200px] truncate">{displayName}</div>
                   <div className="text-[0.6rem] text-white/50 font-mono uppercase mt-1">
-                    {(resume.fileSize / 1024 / 1024).toFixed(2)} MB • {new Date(resume.uploadDate).toLocaleDateString()}
+                    {displaySize ? `${(displaySize / 1024 / 1024).toFixed(2)} MB • ` : ''}
+                    <span className="text-green-400/70">✓ Synced to Cloud</span>
                   </div>
                 </div>
               </div>
@@ -220,10 +229,10 @@ export default function ResumePanel() {
 
             <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
               <button 
-                onClick={() => setShowPreview(true)}
+                onClick={handleView}
                 className="flex items-center justify-center gap-2 py-2 text-[0.65rem] uppercase tracking-widest border border-white/10 hover:border-[var(--accent-primary)]/50 hover:bg-[var(--accent-primary)]/10 hover:text-[var(--accent-primary)] transition-colors"
               >
-                <Eye size={14} /> Preview
+                <Eye size={14} /> View
               </button>
               <button 
                 onClick={handleDownload}
@@ -303,8 +312,6 @@ export default function ResumePanel() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      <ResumePreviewModal isOpen={showPreview} onClose={() => setShowPreview(false)} />
     </div>
   );
 }

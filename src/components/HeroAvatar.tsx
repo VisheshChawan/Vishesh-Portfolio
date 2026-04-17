@@ -1,20 +1,18 @@
 'use client';
 
-import { useProfileImageStore } from '@/store/profileImageStore';
 import { useAdminStore } from '@/store/adminStore';
 import { useAvatarStore } from '@/store/avatarStore';
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 
 export default function HeroAvatar() {
-  const image = useProfileImageStore((s) => s.image);
   const name = useAdminStore((s) => s.config.personal.name);
   const avatarUrl = useAdminStore((s) => s.config.avatarUrl);
   const settings = useAvatarStore((s) => s.settings);
   const [isMobile, setIsMobile] = useState(false);
 
-  // Priority: local base64 (admin has it) > remote blob URL (visitors) > null
-  const imageSrc = image?.base64Data || avatarUrl || null;
+  // Single source of truth: Supabase Storage public URL
+  const imageSrc = avatarUrl || null;
   const hasImage = !!imageSrc;
 
   useEffect(() => {

@@ -5,7 +5,6 @@ import { Download } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 import { useAdminStore } from '@/store/adminStore';
-import { useResumeStore } from '@/store/resumeStore';
 
 const NAV_LINKS = [
   { label: '_about', href: '#about', id: 'about' },
@@ -17,7 +16,8 @@ const NAV_LINKS = [
 
 export default function Navbar() {
   const personalData = useAdminStore(state => state.config.personal);
-  const resume = useResumeStore(state => state.resume);
+  const resumeUrl = useAdminStore(state => state.config.resumeUrl);
+  const resumeFileName = useAdminStore(state => state.config.resumeFileName);
   const [scrolled, setScrolled] = useState(false);
   const [activeSection, setActiveSection] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -112,29 +112,24 @@ export default function Navbar() {
               </div>
 
               {/* Resume button */}
-              {(() => {
-                const resumeUrl = useAdminStore.getState().config.resumeUrl;
-                const resumeFileName = useAdminStore.getState().config.resumeFileName;
-                const href = resume?.base64Data || resumeUrl;
-                const fileName = resume?.fileName || resumeFileName || 'resume';
-                if (!href) return null;
-                return (
-                  <a
-                    href={href}
-                    download={fileName}
-                    className="chamfer-sm flex items-center gap-2 px-4 py-1.5 text-[0.7rem] tracking-[0.1em] uppercase border transition-all duration-300 hover:bg-[var(--accent-primary)]/5"
-                    style={{
-                      fontFamily: 'var(--font-mono)',
-                      color: 'var(--accent-primary)',
-                      borderColor: 'var(--border-default)',
-                    }}
-                    data-cursor-hover
-                  >
-                    <Download size={12} />
-                    RESUME
-                  </a>
-                );
-              })()}
+              {resumeUrl && (
+                <a
+                  href={resumeUrl}
+                  download={resumeFileName || 'resume'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="chamfer-sm flex items-center gap-2 px-4 py-1.5 text-[0.7rem] tracking-[0.1em] uppercase border transition-all duration-300 hover:bg-[var(--accent-primary)]/5"
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--accent-primary)',
+                    borderColor: 'var(--border-default)',
+                  }}
+                  data-cursor-hover
+                >
+                  <Download size={12} />
+                  RESUME
+                </a>
+              )}
             </div>
           </div>
 

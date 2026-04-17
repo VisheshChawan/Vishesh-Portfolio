@@ -1,13 +1,11 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { useProfileImageStore } from '@/store/profileImageStore';
 import { useAdminStore } from '@/store/adminStore';
 import { Upload, Trash2, RefreshCw, ImageIcon, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function ProfileImagePanel() {
-  const { image, setImage, deleteImage } = useProfileImageStore();
   const updateContent = useAdminStore((s) => s.updateContent);
   const avatarUrl = useAdminStore((s) => s.config.avatarUrl);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -17,6 +15,7 @@ export default function ProfileImagePanel() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const [uploadedMeta, setUploadedMeta] = useState<{ fileName: string; fileSize: number; fileType: string } | null>(null);
 
   const triggerToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
@@ -46,44 +45,46 @@ export default function ProfileImagePanel() {
     }, 100);
 
     try {
-      // 1. Upload to Vercel Blob for remote access
+      // Upload to Supabase Storage via API route
       const formData = new FormData();
       formData.append('file', file);
       formData.append('category', 'avatar');
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const json = await res.json();
 
+      clearInterval(interval);
+
       if (json.success && json.url) {
+        setUploadProgress(100);
+        // Update the store with the public URL from Supabase
         updateContent('avatarUrl', json.url);
+        setUploadedMeta({
+          fileName: json.fileName,
+          fileSize: json.fileSize,
+          fileType: json.fileType,
+        });
+
+        // Auto-save the full config to Supabase DB
+        setTimeout(async () => {
+          try {
+            const config = useAdminStore.getState().config;
+            await fetch('/api/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(config),
+            });
+          } catch {}
+        }, 200);
+
+        setTimeout(() => {
+          setUploading(false);
+          triggerToast('Avatar uploaded & synced to cloud.', 'success');
+        }, 300);
+      } else {
+        setUploadProgress(0);
+        setUploading(false);
+        triggerToast(json.error || 'Upload failed.', 'error');
       }
-
-      // 2. Also save locally for instant admin preview
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const base64Data = e.target?.result as string;
-        const img = new window.Image();
-        img.onload = () => {
-          clearInterval(interval);
-          setUploadProgress(100);
-
-          setImage({
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type,
-            uploadDate: new Date().toISOString(),
-            base64Data,
-            width: img.naturalWidth,
-            height: img.naturalHeight,
-          });
-
-          setTimeout(() => {
-            setUploading(false);
-            triggerToast('Avatar uploaded & synced.', 'success');
-          }, 300);
-        };
-        img.src = base64Data;
-      };
-      reader.readAsDataURL(file);
     } catch (err) {
       clearInterval(interval);
       setUploading(false);
@@ -100,8 +101,19 @@ export default function ProfileImagePanel() {
       });
     } catch {}
     updateContent('avatarUrl', undefined);
-    deleteImage();
+    setUploadedMeta(null);
     setShowDeleteConfirm(false);
+
+    // Auto-save config after delete
+    try {
+      const config = useAdminStore.getState().config;
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+    } catch {}
+
     triggerToast('Image removed.', 'success');
   };
 
@@ -112,6 +124,8 @@ export default function ProfileImagePanel() {
     setIsDragging(false);
     if (e.dataTransfer.files?.[0]) processFile(e.dataTransfer.files[0]);
   };
+
+  const hasAvatar = !!avatarUrl;
 
   return (
     <div className="space-y-6 pb-12 text-[#c4cad6] relative">
@@ -127,7 +141,7 @@ export default function ProfileImagePanel() {
           </div>
         )}
 
-        {!image || uploading ? (
+        {!hasAvatar || uploading ? (
           <div
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
@@ -172,14 +186,13 @@ export default function ProfileImagePanel() {
             <div className="flex items-center gap-6 p-4 border border-white/10 bg-black/40">
               <div className="w-24 h-24 shrink-0 overflow-hidden border-2 border-[var(--accent-primary)]/40"
                 style={{ borderRadius: '50%', boxShadow: '0 0 20px rgba(0,255,200,0.15), inset 0 0 20px rgba(0,255,200,0.05)' }}>
-                <img src={image.base64Data} alt="Profile" className="w-full h-full object-cover" />
+                <img src={avatarUrl!} alt="Profile" className="w-full h-full object-cover" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-[0.8rem] text-white font-bold truncate">{image.fileName}</div>
+                <div className="text-[0.8rem] text-white font-bold truncate">{uploadedMeta?.fileName || 'Profile Image'}</div>
                 <div className="text-[0.6rem] text-white/40 font-mono uppercase space-y-1 mt-2">
-                  <div>{(image.fileSize / 1024).toFixed(1)} KB</div>
-                  <div>{image.width} × {image.height} px</div>
-                  <div>{new Date(image.uploadDate).toLocaleDateString()}</div>
+                  {uploadedMeta && <div>{(uploadedMeta.fileSize / 1024).toFixed(1)} KB</div>}
+                  <div className="text-green-400/70">✓ Persisted on Supabase</div>
                 </div>
               </div>
             </div>

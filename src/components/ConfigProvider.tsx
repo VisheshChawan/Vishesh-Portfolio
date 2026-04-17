@@ -2,25 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { useAdminStore } from '@/store/adminStore';
-import { useAdminAuth } from '@/hooks/useAdminAuth';
 
 /**
- * ConfigProvider fetches the remote config from Vercel Blob on mount.
- * - For visitors: hydrates the store with the admin's saved config
- * - For admin: skips remote fetch (admin uses local state + saves to remote)
+ * ConfigProvider fetches the remote config from Supabase on mount.
+ * - For ALL users (admin + visitors): hydrates the store with the persisted config
+ * - This ensures cross-device, cross-browser persistence
  */
 export default function ConfigProvider({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAdminAuth();
   const updateContent = useAdminStore((s) => s.updateContent);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    // Only fetch remote config for non-admin visitors
-    if (isAuthenticated) {
-      setLoaded(true);
-      return;
-    }
-
     const fetchRemoteConfig = async () => {
       try {
         const res = await fetch('/api/config');
@@ -53,7 +45,7 @@ export default function ConfigProvider({ children }: { children: React.ReactNode
     };
 
     fetchRemoteConfig();
-  }, [isAuthenticated, updateContent]);
+  }, [updateContent]);
 
   // Show nothing until config is loaded to prevent flash of default content
   if (!loaded) {
